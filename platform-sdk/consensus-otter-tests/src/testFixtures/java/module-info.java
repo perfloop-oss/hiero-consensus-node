@@ -64,6 +64,7 @@ module org.hiero.otter.fixtures {
     requires transitive org.hiero.base.utility;
     requires transitive org.hiero.consensus.gossip.impl;
     requires transitive org.hiero.consensus.gossip;
+    requires transitive org.hiero.consensus.hashgraph.impl;
     requires transitive org.hiero.consensus.model;
     requires transitive org.hiero.consensus.utility.test.fixtures;
     requires transitive org.hiero.consensus.utility;
@@ -92,7 +93,6 @@ module org.hiero.otter.fixtures {
     requires org.hiero.consensus.event.stream;
     requires org.hiero.consensus.fakes;
     requires org.hiero.consensus.hashgraph.impl.test.fixtures;
-    requires org.hiero.consensus.hashgraph.impl;
     requires org.hiero.consensus.hashgraph;
     requires org.hiero.consensus.iss.detection;
     requires org.hiero.consensus.metrics;
