@@ -108,11 +108,9 @@ public class PredefinedPingTopologyImpl implements PredefinedPingTopology {
     @Override
     @NonNull
     public ConnectionState getConnectionData(@NonNull final Node sender, @NonNull final Node receiver) {
-        // latency is half of ping
+        // latency is half of ping; computed in nanos so that odd pings are not truncated to whole milliseconds
+        final int pingMillis = configuration.pingMatrix()[nodes.indexOf(sender)][nodes.indexOf(receiver)];
         return new ConnectionState(
-                true,
-                Duration.ofMillis(configuration.pingMatrix()[nodes.indexOf(sender)][nodes.indexOf(receiver)] / 2),
-                configuration.jitter(),
-                configuration.bandwidth());
+                true, Duration.ofNanos(pingMillis * 1_000_000L / 2), configuration.jitter(), configuration.bandwidth());
     }
 }

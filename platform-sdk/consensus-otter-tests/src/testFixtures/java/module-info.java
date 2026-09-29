@@ -30,6 +30,8 @@ module org.hiero.otter.fixtures {
             org.hiero.consensus.otter.docker.app;
     exports org.hiero.otter.fixtures.container.utils to
             org.hiero.consensus.otter.docker.app;
+    exports org.hiero.otter.fixtures.falcon to
+            org.hiero.otter.test;
     exports org.hiero.otter.fixtures.internal to
             com.swirlds.config.impl,
             org.hiero.consensus.otter.docker.app,
