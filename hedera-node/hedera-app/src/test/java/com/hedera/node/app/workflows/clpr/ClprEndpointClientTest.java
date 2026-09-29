@@ -11,7 +11,6 @@ import com.hedera.hapi.node.state.clpr.ClprDiscoverEndpointsResponse;
 import com.hedera.hapi.node.state.clpr.ClprEndpoint;
 import com.hedera.hapi.node.state.clpr.ClprServiceEndpoint;
 import com.hedera.hapi.node.state.clpr.ClprStreamingSyncPayload;
-import com.hedera.hapi.node.state.clpr.ClprSyncPayload;
 import com.hedera.node.app.service.clpr.ClprEndpointServiceDefinition;
 import com.hedera.node.app.workflows.clpr.ClprEndpointClient.ClprSyncException;
 import com.hedera.pbj.runtime.io.buffer.Bytes;
@@ -111,37 +110,12 @@ class ClprEndpointClientTest {
         }
     }
 
-    @Test
-    @DisplayName("sync round-trips over mTLS when the peer presents a leaf signed by the pinned CA")
-    void syncSucceedsOverMutualTls() throws Exception {
-        final var expected = ClprSyncPayload.newBuilder()
-                .channelId(CHANNEL_ID)
-                .bundlePayload(Bytes.wrap("inbound-bundle"))
-                .build();
-        final int port = startServer(ClprSyncPayload.PROTOBUF.toBytes(expected).toByteArray(), new byte[0]);
-
-        final var client = newClient(port, testCa.caCert());
-        try {
-            final var response = client.sync(
-                    ClprSyncPayload.newBuilder()
-                            .channelId(CHANNEL_ID)
-                            .bundlePayload(Bytes.wrap("outbound-bundle"))
-                            .build(),
-                    TIMEOUT);
-
-            assertThat(response.channelId()).isEqualTo(CHANNEL_ID);
-            assertThat(response.bundlePayload()).isEqualTo(Bytes.wrap("inbound-bundle"));
-        } finally {
-            client.shutdownChannel();
-        }
-    }
-
     @Nested
     class StreamingSync {
 
         @Test
-        @DisplayName("streamingSync drives a multi-message exchange")
-        void streamingSyncSucceedsOverMutualTls() throws Exception {
+        @DisplayName("sync drives a multi-message exchange")
+        void syncSucceedsOverMutualTls() throws Exception {
             final var mockedResponseMessages = new ClprStreamingSyncPayload[] {
                 buildStreamingSyncPayload(9, Bytes.wrap("1st response bundle")), buildStreamingSyncPayload(null, null),
             };
@@ -150,7 +124,7 @@ class ClprEndpointClientTest {
             final int port = startStreamingServer(mockedResponseMessages, received);
 
             final var client = newClient(port, testCa.caCert());
-            try (final var call = client.streamingSync(TIMEOUT)) {
+            try (final var call = client.sync(TIMEOUT)) {
                 // Msg 1: this ledger sends a bundle request to the peer ledger.
                 call.write(buildStreamingSyncPayload(8, null));
 
@@ -193,15 +167,15 @@ class ClprEndpointClientTest {
         }
 
         @Test
-        @DisplayName("streamingSync write fails on closed the stream")
-        void streamingSyncWriteRejectedAfterPeerCloses() throws Exception {
+        @DisplayName("sync write fails on closed the stream")
+        void syncWriteRejectedAfterPeerCloses() throws Exception {
             // A peer running the old unary-only server: it answers the first message and closes with OK. The second
             // write must not be silently dropped, or a truncated exchange would look completely healthy.
             final var mockedResponseMessages = new ClprStreamingSyncPayload[] {buildStreamingSyncPayload(null, null)};
             final int port = startStreamingServer(mockedResponseMessages, new CopyOnWriteArrayList<>());
 
             final var client = newClient(port, testCa.caCert());
-            try (final var call = client.streamingSync(TIMEOUT)) {
+            try (final var call = client.sync(TIMEOUT)) {
                 call.write(buildStreamingSyncPayload(8, null));
 
                 // Drain until the peer's clean close is observed, so the next write is provably a no-op at the grpc
@@ -219,8 +193,8 @@ class ClprEndpointClientTest {
         }
 
         @Test
-        @DisplayName("streamingSync surfaces a peer error status as a ClprSyncException")
-        void streamingSyncReadSurfacesPeerError() throws Exception {
+        @DisplayName("sync surfaces a peer error status as a ClprSyncException")
+        void syncReadSurfacesPeerError() throws Exception {
             final int port = startStreamingServer(observer -> new StreamObserver<>() {
                 @Override
                 public void onNext(final byte[] value) {
@@ -241,7 +215,7 @@ class ClprEndpointClientTest {
             });
 
             final var client = newClient(port, testCa.caCert());
-            try (final var call = client.streamingSync(TIMEOUT)) {
+            try (final var call = client.sync(TIMEOUT)) {
                 call.write(buildStreamingSyncPayload(8, null));
 
                 assertThatThrownBy(call::read)
@@ -253,14 +227,14 @@ class ClprEndpointClientTest {
         }
 
         @Test
-        @DisplayName("streamingSync halfClose, cancel and close are idempotent")
-        void streamingSyncTerminationIsIdempotent() throws Exception {
+        @DisplayName("sync halfClose, cancel and close are idempotent")
+        void syncTerminationIsIdempotent() throws Exception {
             final var mockedResponseMessages = new ClprStreamingSyncPayload[] {buildStreamingSyncPayload(null, null)};
             final int port = startStreamingServer(mockedResponseMessages, new CopyOnWriteArrayList<>());
 
             final var client = newClient(port, testCa.caCert());
             try {
-                final var call = client.streamingSync(TIMEOUT);
+                final var call = client.sync(TIMEOUT);
                 call.write(buildStreamingSyncPayload(8, null));
 
                 // grpc's BlockingClientCall throws IllegalStateException on a repeated halfClose; the wrapper must not.
@@ -278,8 +252,8 @@ class ClprEndpointClientTest {
         }
 
         @Test
-        @DisplayName("streamingSync close cancels an exchange abandoned part-way")
-        void streamingSyncCloseReleasesAbandonedExchange() throws Exception {
+        @DisplayName("sync close cancels an exchange abandoned part-way")
+        void syncCloseReleasesAbandonedExchange() throws Exception {
             final var cancelObservedByPeer = new CountDownLatch(1);
             final int port = startStreamingServer(responseObserver -> {
                 ((ServerCallStreamObserver<byte[]>) responseObserver)
@@ -305,7 +279,7 @@ class ClprEndpointClientTest {
             final var client = newClient(port, testCa.caCert());
             try {
                 final ClprStreamingSyncCall abandonedCall;
-                try (final var call = client.streamingSync(TIMEOUT)) {
+                try (final var call = client.sync(TIMEOUT)) {
                     abandonedCall = call;
                     call.write(buildStreamingSyncPayload(8, null));
                     // Walk out mid-exchange without half-closing.
@@ -339,7 +313,6 @@ class ClprEndpointClientTest {
                 .endpoints(List.of(peerEndpoint))
                 .build();
         final int port = startServer(
-                new byte[0],
                 ClprDiscoverEndpointsResponse.PROTOBUF.toBytes(discoverResponse).toByteArray());
 
         final var client = newClient(port, testCa.caCert());
@@ -353,20 +326,15 @@ class ClprEndpointClientTest {
     }
 
     @Test
-    @DisplayName("sync fails when pinning a CA that did not sign the peer's leaf")
-    void syncFailsWhenPeerCertificateIsNotPinned() throws Exception {
-        final int port = startServer(new byte[0], new byte[0]);
+    @DisplayName("discoverEndpoints fails when pinning a CA that did not sign the peer's leaf")
+    void discoverFailsWhenPeerCertificateIsNotPinned() throws Exception {
+        final int port = startServer(new byte[0]);
 
         // Pin a CA cert unrelated to the CA that signed the server's leaf — chain validation fails.
         final var client = newClient(port, wrongCaCert);
         try {
-            assertThatThrownBy(() -> client.sync(
-                            ClprSyncPayload.newBuilder()
-                                    .channelId(CHANNEL_ID)
-                                    .bundlePayload(Bytes.wrap("outbound"))
-                                    .build(),
-                            TIMEOUT))
-                    .isInstanceOf(ClprEndpointClient.ClprSyncException.class);
+            assertThatThrownBy(() -> client.discoverEndpoints(CHANNEL_ID, TIMEOUT))
+                    .isInstanceOf(ClprEndpointClient.ClprDiscoveryException.class);
         } finally {
             client.shutdownChannel();
         }
@@ -393,7 +361,7 @@ class ClprEndpointClientTest {
      * Starts a Netty gRPC server that terminates TLS with the test server leaf certificate,
      * requires client authentication, and trusts the test CA cert (which signed the client leaf).
      */
-    private int startServer(final byte[] syncResponse, final byte[] discoverResponse) throws Exception {
+    private int startServer(final byte[] discoverResponse) throws Exception {
         final var sslContext = GrpcSslContexts.configure(
                         SslContextBuilder.forServer(serverLeaf.privateKey(), serverLeaf.cert())
                                 .clientAuth(ClientAuth.REQUIRE)
@@ -402,7 +370,6 @@ class ClprEndpointClientTest {
                 .build();
 
         final var service = ServerServiceDefinition.builder("proto.ClprEndpointService")
-                .addMethod(unaryMethod("sync"), cannedResponse(syncResponse))
                 .addMethod(unaryMethod("discoverEndpoints"), cannedResponse(discoverResponse))
                 .build();
 
@@ -453,7 +420,7 @@ class ClprEndpointClientTest {
     }
 
     /**
-     * Starts a Netty gRPC server exposing only the streamingSync bidi RPC, with the same mTLS setup
+     * Starts a Netty gRPC server exposing only the bidi-streaming sync RPC, with the same mTLS setup
      * as {@link #startServer}. Replies to the client's messages with the provided {@code responseMessages}
      * in the sequence they are provided, recording every message the client sent into {@code received}.
      * Once the last response has been sent the server closes its side with OK; any further client message
@@ -465,7 +432,7 @@ class ClprEndpointClientTest {
         return startStreamingServer(exchangeMessages(responseMessages, received));
     }
 
-    /** Starts a Netty gRPC server exposing only the streamingSync bidi RPC, backed by the given handler. */
+    /** Starts a Netty gRPC server exposing only the bidi-streaming sync RPC, backed by the given handler. */
     private int startStreamingServer(final ServerCalls.BidiStreamingMethod<byte[], byte[]> handler) throws Exception {
         final var sslContext = GrpcSslContexts.configure(
                         SslContextBuilder.forServer(serverLeaf.privateKey(), serverLeaf.cert())
@@ -476,7 +443,7 @@ class ClprEndpointClientTest {
 
         final var service = ServerServiceDefinition.builder(ClprEndpointServiceDefinition.SERVICE_NAME)
                 .addMethod(
-                        streamingMethod(ClprEndpointServiceDefinition.STREAMING_SYNC_FULL_METHOD_NAME),
+                        streamingMethod(ClprEndpointServiceDefinition.SYNC_FULL_METHOD_NAME),
                         ServerCalls.asyncBidiStreamingCall(handler))
                 .build();
 
