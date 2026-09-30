@@ -13,6 +13,7 @@ import com.hedera.hapi.node.state.clpr.ClprServiceEndpoint;
 import com.hedera.hapi.node.state.clpr.ClprStreamingSyncPayload;
 import com.hedera.node.app.service.clpr.ClprEndpointServiceDefinition;
 import com.hedera.node.app.workflows.clpr.ClprEndpointClient.ClprSyncException;
+import com.hedera.pbj.runtime.UnknownFieldException;
 import com.hedera.pbj.runtime.io.buffer.Bytes;
 import edu.umd.cs.findbugs.annotations.Nullable;
 import io.grpc.MethodDescriptor;
@@ -112,6 +113,38 @@ class ClprEndpointClientTest {
 
     @Nested
     class StreamingSync {
+
+        @Test
+        void rejectsResponseWithUnknownFields() throws Exception {
+            final var bytes = ClprStreamingSyncPayload.PROTOBUF
+                    .toBytes(buildStreamingSyncPayload(null, null))
+                    .append(Bytes.fromHex("c03e01"))
+                    .toByteArray();
+            final int port = startStreamingServer(observer -> new StreamObserver<>() {
+                @Override
+                public void onNext(final byte[] value) {
+                    observer.onNext(bytes);
+                    observer.onCompleted();
+                }
+
+                @Override
+                public void onError(final Throwable error) {}
+
+                @Override
+                public void onCompleted() {}
+            });
+
+            final var client = newClient(port, testCa.caCert());
+            try (final var call = client.sync(TIMEOUT)) {
+                call.write(buildStreamingSyncPayload(0, null));
+                call.halfClose();
+                assertThatThrownBy(call::read)
+                        .isInstanceOf(ClprSyncException.class)
+                        .hasRootCauseInstanceOf(UnknownFieldException.class);
+            } finally {
+                client.shutdownChannel();
+            }
+        }
 
         @Test
         @DisplayName("sync drives a multi-message exchange")
@@ -320,6 +353,23 @@ class ClprEndpointClientTest {
             final var discovered = client.discoverEndpoints(CHANNEL_ID, TIMEOUT);
 
             assertThat(discovered).containsExactly(peerEndpoint);
+        } finally {
+            client.shutdownChannel();
+        }
+    }
+
+    @Test
+    void rejectsDiscoverResponseWithUnknownFields() throws Exception {
+        final var discoverResponse = ClprDiscoverEndpointsResponse.PROTOBUF
+                .toBytes(ClprDiscoverEndpointsResponse.DEFAULT)
+                .append(Bytes.fromHex("c03e01"));
+        final int port = startServer(discoverResponse.toByteArray());
+
+        final var client = newClient(port, testCa.caCert());
+        try {
+            assertThatThrownBy(() -> client.discoverEndpoints(CHANNEL_ID, TIMEOUT))
+                    .isInstanceOf(ClprEndpointClient.ClprDiscoveryException.class)
+                    .hasRootCauseInstanceOf(UnknownFieldException.class);
         } finally {
             client.shutdownChannel();
         }
